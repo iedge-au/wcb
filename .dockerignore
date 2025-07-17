@@ -1,0 +1,11 @@
+# Exclude large directories containing VM assets from the build context.
+# This is critical for build performance.
+vm-images/
+isos/
+
+# Exclude documentation and git files that are not needed for the build.
+README.md
+.gitignore
+.dockerignore
+.archive
+.claude

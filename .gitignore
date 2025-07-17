@@ -1,0 +1,14 @@
+# Ignore VM disk images and ISOs
+/vm-images/
+/isos/
+
+# Ignore generated ISO for unattended install
+*.iso
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore planning content
+.archive/
+.claude

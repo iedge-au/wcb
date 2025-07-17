@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+    <settings pass="windowsPE">
+        <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <SetupUILanguage>
+                <UILanguage>en-US</UILanguage>
+            </SetupUILanguage>
+            <InputLocale>en-US</InputLocale>
+            <SystemLocale>en-US</SystemLocale>
+            <UILanguage>en-US</UILanguage>
+            <UserLocale>en-US</UserLocale>
+        </component>
+        <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <ImageInstall>
+                <OSImage>
+                    <InstallFrom>
+                        <MetaData wcm:action="add">
+                            <Key>/IMAGE/INDEX</Key>
+                            <Value>1</Value>
+                        </MetaData>
+                    </InstallFrom>
+                    <InstallTo>
+                        <DiskID>0</DiskID>
+                        <PartitionID>1</PartitionID>
+                    </InstallTo>
+                </OSImage>
+            </ImageInstall>
+            <UserData>
+                <AcceptEula>true</AcceptEula>
+                <FullName>Developer</FullName>
+                <Organization>WCB</Organization>
+            </UserData>
+            <DiskConfiguration>
+                <Disk wcm:action="add">
+                    <DiskID>0</DiskID>
+                    <WillWipeDisk>true</WillWipeDisk>
+                    <CreatePartitions>
+                        <CreatePartition wcm:action="add">
+                            <Order>1</Order>
+                            <Type>Primary</Type>
+                            <Extend>true</Extend>
+                        </CreatePartition>
+                    </CreatePartitions>
+                    <ModifyPartitions>
+                        <ModifyPartition wcm:action="add">
+                            <Order>1</Order>
+                            <PartitionID>1</PartitionID>
+                            <Letter>C</Letter>
+                            <Format>NTFS</Format>
+                            <Active>true</Active>
+                        </ModifyPartition>
+                    </ModifyPartitions>
+                </Disk>
+            </DiskConfiguration>
+        </component>
+    </settings>
+    <settings pass="specialize">
+        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <ComputerName>wcb-vm</ComputerName>
+            <TimeZone>UTC</TimeZone>
+        </component>
+    </settings>
+    <settings pass="oobeSystem">
+        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <UserAccounts>
+                <AdministratorPassword>
+                    <Value>Password123</Value>
+                    <PlainText>true</PlainText>
+                </AdministratorPassword>
+                <LocalAccounts>
+                    <LocalAccount wcm:action="add">
+                        <Password>
+                            <Value>Password123</Value>
+                            <PlainText>true</PlainText>
+                        </Password>
+                        <Description>Developer Account</Description>
+                        <DisplayName>developer</DisplayName>
+                        <Group>Administrators</Group>
+                        <Name>developer</Name>
+                    </LocalAccount>
+                </LocalAccounts>
+            </UserAccounts>
+            <AutoLogon>
+                <Password>
+                    <Value>Password123</Value>
+                    <PlainText>true</PlainText>
+                </Password>
+                <Enabled>true</Enabled>
+                <Username>developer</Username>
+                <LogonCount>999</LogonCount>
+            </AutoLogon>
+            <FirstLogonCommands>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "Set-SConfig -AutoLaunch $false"</CommandLine>
+                    <Description>Disable SConfig auto-launch</Description>
+                    <Order>1</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "Enable-PSRemoting -SkipNetworkProfileCheck -Force"</CommandLine>
+                    <Description>Enable PowerShell Remoting</Description>
+                    <Order>2</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "winrm quickconfig -q"</CommandLine>
+                    <Description>Configure WinRM basic setup</Description>
+                    <Order>3</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "winrm set winrm/config/service/auth '@{Basic=\"true\";Certificate=\"false\";Negotiate=\"true\";Kerberos=\"true\"}'"</CommandLine>
+                    <Description>Configure WinRM service authentication</Description>
+                    <Order>4</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "winrm set winrm/config/client/auth '@{Basic=\"true\";Certificate=\"false\"}'"</CommandLine>
+                    <Description>Configure WinRM client authentication</Description>
+                    <Order>5</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "winrm set winrm/config/service '@{AllowUnencrypted=\"true\"}'"</CommandLine>
+                    <Description>Allow unencrypted WinRM traffic</Description>
+                    <Order>6</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "winrm set winrm/config/client '@{TrustedHosts=\"localhost\"}'"</CommandLine>
+                    <Description>Set WinRM trusted hosts</Description>
+                    <Order>7</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'LocalAccountTokenFilterPolicy' -Value 1 -Force"</CommandLine>
+                    <Description>Enable local account token filter policy</Description>
+                    <Order>8</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "net user testuser Password123 /add; net localgroup administrators testuser /add"</CommandLine>
+                    <Description>Create test user with simple password</Description>
+                    <Order>9</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "netsh advfirewall firewall add rule name='WinRM-HTTP' dir=in localport=5985 protocol=TCP action=allow"</CommandLine>
+                    <Description>Add firewall rule for WinRM</Description>
+                    <Order>10</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "Restart-Service winrm -Force"</CommandLine>
+                    <Description>Restart WinRM service</Description>
+                    <Order>11</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "reg add 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' /v fDisableClip /t REG_DWORD /d 0 /f"</CommandLine>
+                    <Description>Enable clipboard sharing policy</Description>
+                    <Order>12</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "reg add 'HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' /v fDisableClip /t REG_DWORD /d 0 /f"</CommandLine>
+                    <Description>Enable RDP clipboard sharing</Description>
+                    <Order>13</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "echo 'Configuring DNS servers...' >> C:\docker-install.log; netsh interface ip set dns 'Ethernet' static 10.0.2.3 primary; netsh interface ip add dns 'Ethernet' 8.8.8.8 index=2; ipconfig /flushdns"</CommandLine>
+                    <Description>Configure DNS servers</Description>
+                    <Order>14</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "echo 'Testing network connectivity...' >> C:\docker-install.log; ping 8.8.8.8 *>> C:\docker-install.log 2>&amp;1; nslookup google.com 8.8.8.8 *>> C:\docker-install.log 2>&amp;1; Test-NetConnection google.com -Port 443 *>> C:\docker-install.log 2>&amp;1"</CommandLine>
+                    <Description>Test network connectivity</Description>
+                    <Order>15</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "echo 'Installing NuGet provider...' >> C:\docker-install.log; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Confirm:$false *>> C:\docker-install.log 2>&amp;1"</CommandLine>
+                    <Description>Install NuGet provider</Description>
+                    <Order>16</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "echo 'Downloading Microsoft Docker installation script...' >> C:\docker-install.log; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/microsoft/Windows-Containers/Main/helpful_tools/Install-DockerCE/install-docker-ce.ps1' -OutFile 'C:\install-docker-ce.ps1' *>> C:\docker-install.log 2>&amp;1"</CommandLine>
+                    <Description>Download Docker installation script</Description>
+                    <Order>17</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -ExecutionPolicy Bypass -File C:\install-docker-ce.ps1 -DockerVersion latest</CommandLine>
+                    <Description>Install Docker using Microsoft script</Description>
+                    <Order>18</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "echo 'Waiting for Docker installation to complete...' >> C:\docker-install.log; Start-Sleep -Seconds 120 *>> C:\docker-install.log 2>&amp;1"</CommandLine>
+                    <Description>Wait for Docker installation</Description>
+                    <Order>19</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "echo 'Checking Docker service availability...' >> C:\docker-install.log; for(\$i=1; \$i -le 10; \$i++) { if(Get-Service Docker -ErrorAction SilentlyContinue) { echo 'Docker service found' >> C:\docker-install.log; Start-Service Docker *>> C:\docker-install.log 2>&amp;1; Set-Service Docker -StartupType Automatic *>> C:\docker-install.log 2>&amp;1; break } else { echo \"Attempt \$i: Docker service not ready, waiting...\" >> C:\docker-install.log; Start-Sleep -Seconds 30 } }"</CommandLine>
+                    <Description>Wait for and start Docker service</Description>
+                    <Order>20</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "echo 'Testing Docker installation...' >> C:\docker-install.log; docker version *>> C:\docker-install.log 2>&amp;1"</CommandLine>
+                    <Description>Test Docker installation</Description>
+                    <Order>21</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "echo 'Adding Docker API firewall rule...' >> C:\docker-install.log; netsh advfirewall firewall add rule name='Docker API TCP' dir=in protocol=TCP localport=2376 action=allow *>> C:\docker-install.log 2>&amp;1"</CommandLine>
+                    <Description>Add firewall rule for Docker API TCP port 2376</Description>
+                    <Order>22</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "echo 'Ensuring Docker auto-start configuration...' >> C:\docker-install.log; sc config docker start= auto *>> C:\docker-install.log 2>&amp;1; sc start docker *>> C:\docker-install.log 2>&amp;1; echo 'Final Docker service status:' >> C:\docker-install.log; sc query docker *>> C:\docker-install.log 2>&amp;1"</CommandLine>
+                    <Description>Ensure Docker service auto-starts and verify status</Description>
+                    <Order>23</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>cmd /c "echo Docker installation complete > C:\docker-installed.txt"</CommandLine>
+                    <Description>Mark Docker installation complete</Description>
+                    <Order>24</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>cmd /c "echo Setup complete > C:\setup-complete.txt"</CommandLine>
+                    <Description>Mark Setup Complete</Description>
+                    <Order>25</Order>
+                </SynchronousCommand>
+            </FirstLogonCommands>
+        </component>
+    </settings>
+</unattend>
