@@ -17,7 +17,7 @@ Windows Container Bridge enables Linux developers to build and test native Windo
 ### Quick Start
 ```bash
 # Start WCB (may take 1-2 minutes to fully connect to docker)
-docker run -d -p 2376:2376 -p 8888:8888 --device /dev/kvm:/dev/kvm --name wcb ghcr.io/lteacher/wcb:latest
+docker run -d -p 2376:2376 -p 8888:8888 --device /dev/kvm:/dev/kvm --name wcb ghcr.io/iedge-au/wcb:latest
 
 # Create Docker context  
 docker context create wcb --docker "host=tcp://localhost:2376"
@@ -41,7 +41,7 @@ docker -c wcb run -d \
   -v "$(pwd)/vm-images:/vm-images" \
   -v "$(pwd)/isos:/isos:ro" \
   --name wcb \
-  ghcr.io/lteacher/wcb:latest
+  ghcr.io/iedge-au/wcb:latest
 ```
 
 ### Docker Context Methods
@@ -100,11 +100,18 @@ curl http://localhost:8888  # Access your Windows container
 
 **Development:**
 ```bash
-git clone https://github.com/lteacher/wcb.git
+# Clone repository
+git clone https://github.com/iedge-au/wcb.git
 cd wcb
-docker build -t wcb-dev .
+
+# Download Windows Server 2022 evaluation ISO
+# Place in isos/windows-server-2022.iso
+
+# Build container image
+docker build -t wcb .
+
+# Run with custom specs
+docker run -d -p 2376:2376 -p 8888:8888 \
+  -e VM_RAM=8192 -e VM_CPUS=4 \
+  --device /dev/kvm:/dev/kvm wcb
 ```
-
----
-
-Built with ❤️ for cross-platform Windows container development
