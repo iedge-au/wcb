@@ -16,15 +16,14 @@ Windows Container Bridge enables Linux developers to build and test native Windo
 
 ### Quick Start
 ```bash
-# Start WCB (may take 1-2 minutes to fully connect to docker)
+# Start WCB (may take 120+ seconds to fully connect to docker)
 docker run -d -p 2376:2376 -p 8888:8888 --device /dev/kvm:/dev/kvm --name wcb ghcr.io/iedge-au/wcb:latest
 
 # Create Docker context  
 docker context create wcb --docker "host=tcp://localhost:2376"
 
 # Use Windows containers
-docker -c wcb pull mcr.microsoft.com/hello-world:nanoserver
-docker -c wcb run --rm mcr.microsoft.com/hello-world:nanoserver
+docker -c wcb run --rm hello-world:nanoserver
 ```
 
 ### Full Configuration

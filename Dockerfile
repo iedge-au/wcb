@@ -6,13 +6,7 @@ FROM alpine:latest
 # Set working directory
 WORKDIR /
 
-# Install dependencies
-# - qemu-system-x86_64: For running VMs
-# - qemu-img: For disk image management  
-# - python3, py3-pip: For WinRM automation
-# - genisoimage: For creating ISO images
-# - curl: For health checks
-# - ovmf: UEFI firmware for QEMU
+# Install dependencies and clean up in single layer
 RUN apk add --no-cache \
     qemu-system-x86_64 \
     qemu-img \
@@ -25,36 +19,25 @@ RUN apk add --no-cache \
     bash \
     mtools \
     dosfstools \
-    && pip3 install --no-cache-dir --break-system-packages pywinrm
+    && pip3 install --no-cache-dir --break-system-packages pywinrm \
+    && rm -rf /var/cache/apk/* /tmp/* /root/.cache
 
-# Create required directories
-RUN mkdir -p /vm-images /isos /unattend /scripts /tmp /virtio-drivers
+# Create directories and download VirtIO drivers in single layer
+RUN mkdir -p /vm-images /isos /unattend /scripts /tmp /virtio-drivers \
+    && curl -L -o /tmp/virtio-win.iso https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
 
-# Download VirtIO drivers for Windows Server 2022
-RUN curl -L -o /tmp/virtio-win.iso https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
-
-# Copy scripts and configuration
+# Copy scripts, configuration, and VM images
 COPY scripts/ /scripts/
 COPY unattend/ /unattend/
+COPY vm-images/ /vm-images/
 
-# Make scripts executable
-RUN chmod +x /scripts/*.sh
+# Setup scripts and firmware in single layer
+RUN chmod +x /scripts/*.sh \
+    && (cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2-ovmf/x64/ 2>/dev/null || \
+        mkdir -p /usr/share/edk2-ovmf/x64/ && \
+        cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2-ovmf/x64/ 2>/dev/null || \
+        echo "OVMF firmware will be located at runtime")
 
-# Copy OVMF firmware to expected location
-RUN cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2-ovmf/x64/ 2>/dev/null || \
-    mkdir -p /usr/share/edk2-ovmf/x64/ && \
-    cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2-ovmf/x64/ 2>/dev/null || \
-    echo "OVMF firmware will be located at runtime"
-
-# Build the Windows VM image during container build (optional)
-# This step requires the Windows Server 2022 ISO to be mounted at runtime
-ARG BUILD_VM=false
-RUN if [ "$BUILD_VM" = "true" ]; then \
-        echo "Building Windows VM image during container build..." && \
-        /scripts/build-vm-image.sh; \
-    else \
-        echo "Skipping VM image build - will build at runtime if needed"; \
-    fi
 
 # Expose ports
 # 2376: Docker daemon API
