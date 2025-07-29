@@ -299,8 +299,13 @@ try:
         
         # Create daemon.json with proper configuration
         session.run_ps('New-Item -ItemType Directory -Path "C:\\\\ProgramData\\\\Docker\\\\config" -Force')
-        daemon_json = '{\\"hosts\\": [\\"tcp://0.0.0.0:2376\\", \\"npipe://\\"], \\"debug\\": true}'
-        daemon_config = f'echo {daemon_json} > C:\\\\ProgramData\\\\Docker\\\\config\\\\daemon.json'
+        
+        # Create Docker data-root directory (required for daemon.json data-root setting)
+        print("[RUNTIME] Creating Docker data-root directory...")
+        session.run_ps('New-Item -ItemType Directory -Path "C:\\\\Docker" -Force')
+        
+        daemon_json = '{\\"hosts\\": [\\"tcp://0.0.0.0:2376\\", \\"npipe://\\"], \\"debug\\": false, \\"data-root\\": \\"C:\\\\\\\\Docker\\", \\"storage-opts\\": [\\"size=60GB\\"]}'
+        daemon_config = f'echo {daemon_json} > C:\\\\\\\\ProgramData\\\\\\\\Docker\\\\\\\\config\\\\\\\\daemon.json'
         session.run_cmd(daemon_config)
         
         # Ensure service has no CLI flags

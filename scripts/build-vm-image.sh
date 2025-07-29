@@ -17,7 +17,7 @@ BUILD_DISK="/tmp/build-disk.qcow2"
 # VM specifications
 VM_RAM="4096"
 VM_CPUS="2"
-VM_DISK_SIZE="20G"
+VM_DISK_SIZE="100G"
 
 # Network and timing
 WINRM_PORT="5985"
@@ -706,11 +706,15 @@ try:
     print("[DOCKER CONFIG] Creating daemon.json for TCP API access...")
     
     # Ensure config directory exists
-    session.run_ps('New-Item -ItemType Directory -Path "C:\\ProgramData\\Docker\\config" -Force')
+    session.run_ps('New-Item -ItemType Directory -Path "C:\\\\ProgramData\\\\Docker\\\\config" -Force')
     
-    # Create daemon.json with simple string approach (avoids PowerShell hashtable issues)
-    daemon_json = '{\\"hosts\\": [\\"tcp://0.0.0.0:2376\\", \\"npipe://\\"], \\"debug\\": true}'
-    daemon_config = f'echo {daemon_json} > C:\\\\ProgramData\\\\Docker\\\\config\\\\daemon.json'
+    # Create Docker data-root directory (required for daemon.json data-root setting)
+    print("[DOCKER CONFIG] Creating Docker data-root directory...")
+    session.run_ps('New-Item -ItemType Directory -Path "C:\\\\Docker" -Force')
+    
+    # Create daemon.json with correct Windows syntax (per official Docker docs)
+    daemon_json = '{\\"hosts\\": [\\"tcp://0.0.0.0:2376\\", \\"npipe://\\"], \\"debug\\": false, \\"data-root\\": \\"C:\\\\\\\\Docker\\", \\"storage-opts\\": [\\"size=60GB\\"]}'
+    daemon_config = f'echo {daemon_json} > C:\\\\\\\\ProgramData\\\\\\\\Docker\\\\\\\\config\\\\\\\\daemon.json'
     
     result = session.run_cmd(daemon_config)
     if result.status_code == 0:
