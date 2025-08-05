@@ -724,9 +724,9 @@ try:
         print("[DOCKER CONFIG] Removing any CLI flags from Docker service...")
         session.run_cmd('sc config docker binpath= "C:\\\\Windows\\\\system32\\\\dockerd.exe --run-service"')
         
-        # Set service to delayed start for better startup timing
-        print("[DOCKER CONFIG] Setting Docker service to delayed start...")
-        session.run_cmd('sc config docker start= delayed-auto')
+        # Set service to immediate start to eliminate 120s startup delay
+        print("[DOCKER CONFIG] Setting Docker service to immediate start...")
+        session.run_cmd('sc config docker start= auto')
         
         print("[DOCKER CONFIG] Docker configured to use daemon.json on startup")
     else:

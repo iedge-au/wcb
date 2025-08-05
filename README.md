@@ -18,30 +18,26 @@ Windows Container Bridge enables Linux developers to build and test native Windo
 ### Quick Start
 
 ```bash
-# Start WCB (may take 120+ seconds to fully connect to docker)
-docker run -d -p 2376:2376 -p 8888:8888 --device /dev/kvm:/dev/kvm --name wcb ghcr.io/iedge-au/wcb:latest
+# Start WCB (requires privileged access for bridge networking)
+docker run -d --privileged --network host -v /dev/kvm:/dev/kvm --name wcb ghcr.io/iedge-au/wcb:latest
 
-# Create Docker context
-docker context create wcb --docker "host=tcp://localhost:2376"
+# Create Docker context (VM available at static IP)
+docker context create wcb --docker host=tcp://172.17.0.100:2376
 
 # Use Windows containers
 docker -c wcb run --rm hello-world:nanoserver
 ```
 
-### Full Configuration
+### Configuration Options
 
 ```bash
-# All options
+# Custom VM specs and VNC access
 docker run -d \
-  -p 2376:2376 \
-  -p 8888:8888 \
-  -p 5901:5901 \
+  --privileged --network host \
   -e VM_RAM=8192 \
   -e VM_CPUS=4 \
   -e ENABLE_VNC=true \
-  --device /dev/kvm:/dev/kvm \
-  -v "$(pwd)/vm-images:/vm-images" \
-  -v "$(pwd)/isos:/isos:ro" \
+  -v /dev/kvm:/dev/kvm \
   --name wcb \
   ghcr.io/iedge-au/wcb:latest
 ```
@@ -50,11 +46,11 @@ docker run -d \
 
 ```bash
 # Method 1: Named context (recommended)
-docker context create wcb --docker "host=tcp://localhost:2376"
+docker context create wcb --docker host=tcp://172.17.0.100:2376
 docker --context wcb run -d -p 8080:80 mcr.microsoft.com/windows/servercore/iis
 
 # Method 2: Direct host flag
-docker -H tcp://localhost:2376 run -d -p 8080:80 mcr.microsoft.com/windows/servercore/iis
+docker -H tcp://172.17.0.100:2376 run -d -p 8080:80 mcr.microsoft.com/windows/servercore/iis
 
 # Method 3: Set as default
 docker context use wcb
@@ -64,36 +60,49 @@ docker run -d -p 8080:80 mcr.microsoft.com/windows/servercore/iis  # Now uses WC
 ### Port Access
 
 ```bash
-# Container ports bind to VM, access via host port 8888
+# Container ports are directly accessible at the VM IP
 docker -c wcb run -d -p 8080:80 my-iis-app
-curl http://localhost:8888  # Access your Windows container
+curl http://172.17.0.100:8080  # Direct access to your Windows container
 ```
 
-## Configuration
+## System Requirements
 
-| Environment Variable | Default | Description                    |
-| -------------------- | ------- | ------------------------------ |
-| `VM_RAM`             | `4096`  | Memory allocation (MB)         |
-| `VM_CPUS`            | `2`     | CPU core count                 |
-| `ENABLE_VNC`         | `false` | Enable VNC access on port 5901 |
+- **Minimum**: 4GB RAM, 10GB disk space
+- **Recommended**: 8GB+ RAM, hardware virtualization (`/dev/kvm`)
+- **Platform**: x86_64 Linux with Docker
+- **Privileges**: `--privileged --network host` (required for bridge networking)
 
-| Port   | Purpose            | Required |
+## Advanced Configuration
+
+### Environment Variables
+
+| Variable     | Default | Description                    |
+| ------------ | ------- | ------------------------------ |
+| `VM_RAM`     | `4096`  | Memory allocation (MB)         |
+| `VM_CPUS`    | `2`     | CPU core count                 |
+| `ENABLE_VNC` | `false` | Enable VNC access on port 5901 |
+
+### NAT Mode Fallback
+
+If bridge networking is unavailable, WCB automatically falls back to NAT mode:
+
+```bash
+# NAT mode (automatic fallback)
+docker run -d -p 2376:2376 -p 8888:8888 -v /dev/kvm:/dev/kvm --name wcb ghcr.io/iedge-au/wcb:latest
+
+# Create context for NAT mode
+docker context create wcb --docker host=tcp://localhost:2376
+
+# Container access via forwarded port
+docker -c wcb run -d -p 8080:80 my-app
+curl http://localhost:8888  # Access via NAT forwarding
+```
+
+| Port   | Purpose            | NAT Mode |
 | ------ | ------------------ | -------- |
-| `2376` | Docker API         | Yes      |
-| `8888` | Application access | Yes      |
+| `2376` | Docker API         | Required |
+| `8888` | Application access | Required |
 | `5901` | VNC display        | Optional |
-
-| Volume Mount | Purpose               | Required    |
-| ------------ | --------------------- | ----------- |
-| `/vm-images` | Persist VM images     | Recommended |
-| `/isos`      | Custom Windows ISO    | Optional    |
-| `/dev/kvm`   | Hardware acceleration | Recommended |
-
-**System Requirements:**
-
-- 8GB+ RAM, 10GB+ disk space
-- Hardware virtualization (`/dev/kvm` recommended)
-- x86_64 Linux with Docker
 
 ## Contributing
 
@@ -103,7 +112,7 @@ curl http://localhost:8888  # Access your Windows container
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-**Development:**
+### Development
 
 ```bash
 # Clone repository
@@ -116,8 +125,16 @@ cd wcb
 # Build container image
 docker build -t wcb .
 
-# Run with custom specs
-docker run -d -p 2376:2376 -p 8888:8888 \
+# Run with development volumes
+docker run -d --privileged --network host \
   -e VM_RAM=8192 -e VM_CPUS=4 \
-  --device /dev/kvm:/dev/kvm wcb
+  -v /dev/kvm:/dev/kvm \
+  -v "$(pwd)/vm-images:/vm-images" \
+  -v "$(pwd)/isos:/isos:ro" \
+  --name wcb-dev wcb
 ```
+
+| Volume Mount | Purpose               | Development Use |
+| ------------ | --------------------- | --------------- |
+| `/vm-images` | Persist VM images     | Building/testing |
+| `/isos`      | Custom Windows ISO    | Custom builds |
