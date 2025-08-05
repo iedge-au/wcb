@@ -23,8 +23,12 @@ VM_APP_PORT="8080"
 VM_WINRM_PORT="5985"
 
 # Timeouts
-DOCKER_TIMEOUT="1800"  # 30 minutes to wait for Docker to be ready (for debugging)
-SHUTDOWN_TIMEOUT="60" # 1 minute to wait for graceful shutdown
+DOCKER_TIMEOUT="300"
+SHUTDOWN_TIMEOUT="60"
+
+# Static VM network configuration  
+VM_STATIC_IP="172.17.0.100"
+VM_MAC_ADDRESS="52:54:00:12:34:56"
 
 # Process tracking
 QEMU_PID=""
@@ -51,6 +55,93 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# --- Utility Functions ---
+get_vm_ip() {
+    # Returns the VM's IP address, using static IP if bridge networking is available
+    if is_bridge_networking; then
+        echo "$VM_STATIC_IP"
+    else
+        echo "localhost"
+    fi
+}
+
+is_bridge_networking() {
+    # Check if bridge networking is available and configured
+    brctl show | grep -q "^docker0" && [ -f /usr/lib/qemu/qemu-bridge-helper ]
+}
+
+get_winrm_url() {
+    # Returns the appropriate WinRM URL based on networking mode
+    local vm_ip=$(get_vm_ip)
+    if [ "$vm_ip" = "localhost" ]; then
+        echo "http://localhost:${VM_WINRM_PORT}/wsman"
+    else
+        echo "http://${vm_ip}:5985/wsman"
+    fi
+}
+
+get_docker_url() {
+    # Returns the appropriate Docker API URL based on networking mode
+    local vm_ip=$(get_vm_ip)
+    if [ "$vm_ip" = "localhost" ]; then
+        echo "http://localhost:${HOST_DOCKER_PORT}/version"
+    else
+        echo "http://${vm_ip}:2376/version"
+    fi
+}
+
+wait_for_vm_ip() {
+    # Wait for VM to appear on network (bridge mode only)
+    if ! is_bridge_networking; then
+        return 0  # NAT mode - no IP discovery needed
+    fi
+    
+    log_info "Waiting for VM to obtain IP address..."
+    local timeout=60
+    local elapsed=0
+    
+    while [ $elapsed -lt $timeout ]; do
+        if ip neigh show dev docker0 | grep -q "$VM_STATIC_IP"; then
+            log_success "VM network ready at $VM_STATIC_IP"
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+    
+    log_error "VM did not obtain expected IP address within ${timeout}s"
+    return 1
+}
+
+test_winrm_connection() {
+    # Test if WinRM is available on the VM
+    if is_bridge_networking; then
+        python3 -c "
+import winrm
+try:
+    session = winrm.Session('http://172.17.0.100:5985/wsman', 
+                           auth=('developer', 'Password123'), 
+                           transport='basic')
+    result = session.run_cmd('echo test')
+    exit(0 if result.status_code == 0 else 1)
+except Exception as e:
+    exit(1)
+        "
+    else
+        python3 -c "
+import winrm
+try:
+    session = winrm.Session('http://localhost:5985/wsman', 
+                           auth=('developer', 'Password123'), 
+                           transport='basic')
+    result = session.run_cmd('echo test')
+    exit(0 if result.status_code == 0 else 1)
+except Exception as e:
+    exit(1)
+        "
+    fi
 }
 
 # --- Cleanup Function ---
@@ -145,45 +236,127 @@ prepare_runtime_disk() {
     fi
 }
 
+start_bridge_dhcp_server() {
+    log_info "Starting DHCP server on Docker bridge..." >&2
+    
+    pkill dnsmasq 2>/dev/null || true
+    
+    dnsmasq \
+        --interface=docker0 \
+        --bind-interfaces \
+        --dhcp-range=$VM_STATIC_IP,$VM_STATIC_IP,12h \
+        --dhcp-host=$VM_MAC_ADDRESS,$VM_STATIC_IP,wcb-vm,12h \
+        --dhcp-option=3,172.17.0.1 \
+        --dhcp-option=6,8.8.8.8,8.8.4.4 \
+        --no-daemon \
+        --log-dhcp \
+        --pid-file=/tmp/dnsmasq.pid &
+    
+    log_success "DHCP server configured for static IP $VM_STATIC_IP" >&2
+}
+
+configure_bridge_permissions() {
+    # Configure QEMU bridge helper to allow docker0 access
+    if [ -f /etc/qemu/bridge.conf ] && ! grep -q "allow docker0" /etc/qemu/bridge.conf; then
+        log_info "Configuring QEMU bridge permissions for docker0..." >&2
+        echo "allow docker0" >> /etc/qemu/bridge.conf
+        log_success "Added docker0 to QEMU bridge configuration" >&2
+    fi
+}
+
+configure_vm_networking() {
+    # Check if we can use bridge networking for better network access
+    local bridge_name=""
+    
+    # Try to find available bridges in order of preference
+    for bridge in docker0 br0 virbr0; do
+        if brctl show | grep -q "^${bridge}"; then
+            bridge_name="$bridge"
+            log_info "Found bridge: $bridge_name" >&2
+            break
+        fi
+    done
+    
+    if [ -n "$bridge_name" ] && [ -f /usr/lib/qemu/qemu-bridge-helper ]; then
+        # Configure bridge permissions and start DHCP server
+        configure_bridge_permissions >&2
+        start_bridge_dhcp_server >&2
+        
+        # Test if bridge networking is working by checking permissions
+        if grep -q "allow $bridge_name" /etc/qemu/bridge.conf 2>/dev/null; then
+            log_info "Bridge mode: VM will have direct network access via $bridge_name" >&2
+            log_info "VM will be accessible on the Docker network (no port forwarding needed)" >&2
+            echo "-netdev bridge,id=net0,br=$bridge_name"
+        else
+            log_warn "Bridge permissions not configured, falling back to NAT mode" >&2
+            echo "-netdev user,id=net0,hostfwd=tcp::${HOST_DOCKER_PORT}-:${VM_DOCKER_PORT},hostfwd=udp::${HOST_DOCKER_PORT}-:${VM_DOCKER_PORT},hostfwd=tcp::${HOST_APP_PORT}-:${VM_APP_PORT},hostfwd=tcp::${VM_WINRM_PORT}-:5985"
+        fi
+    else
+        # Fallback to NAT networking with port forwarding
+        if [ -z "$bridge_name" ]; then
+            log_warn "No bridge found, using NAT mode" >&2
+        else
+            log_warn "Bridge helper not available, using NAT mode" >&2
+        fi
+        log_info "NAT mode: Limited network access with port forwarding" >&2
+        log_info "  Host ${HOST_DOCKER_PORT} → VM ${VM_DOCKER_PORT} (Docker API)" >&2
+        log_info "  Host ${HOST_APP_PORT} → VM ${VM_APP_PORT} (Application)" >&2
+        echo "-netdev user,id=net0,hostfwd=tcp::${HOST_DOCKER_PORT}-:${VM_DOCKER_PORT},hostfwd=udp::${HOST_DOCKER_PORT}-:${VM_DOCKER_PORT},hostfwd=tcp::${HOST_APP_PORT}-:${VM_APP_PORT},hostfwd=tcp::${VM_WINRM_PORT}-:5985"
+    fi
+}
+
 start_vm() {
     log_info "Starting Windows Server Core VM..."
     log_info "VM specs: ${VM_RAM}MB RAM, ${VM_CPUS} CPUs"
-    log_info "Port forwarding:"
-    log_info "  Host ${HOST_DOCKER_PORT} → VM ${VM_DOCKER_PORT} (Docker API)"
-    log_info "  Host ${HOST_APP_PORT} → VM ${VM_APP_PORT} (Application)"
+    
+    # Configure networking
+    log_info "Configuring VM networking..."
+    local network_config
+    network_config=$(configure_vm_networking)
     
     # Configure display options based on ENABLE_VNC
     local display_options=""
     if [ "${ENABLE_VNC:-false}" = "true" ]; then
-        log_info "  Host 5901 → VM VNC (Remote Display)"
         log_info "VNC enabled - VM display available at localhost:5901"
         display_options="-vnc :1"
     else
         display_options="-nographic -serial null -display none"
     fi
     
-    # Start QEMU with the runtime disk (matching build configuration)
+    log_info "Starting VM with network configuration..."
+    
+    # Start QEMU with the runtime disk and configured networking
     qemu-system-x86_64 \
         -m "$VM_RAM" \
         -smp "$VM_CPUS" \
         -drive file="$RUNTIME_DISK",format=qcow2,if=ide \
-        -netdev user,id=net0,hostfwd=tcp::${HOST_DOCKER_PORT}-:${VM_DOCKER_PORT},hostfwd=udp::${HOST_DOCKER_PORT}-:${VM_DOCKER_PORT},hostfwd=tcp::${HOST_APP_PORT}-:${VM_APP_PORT},hostfwd=tcp::${VM_WINRM_PORT}-:5985 \
-        -device e1000,netdev=net0 \
+        $network_config \
+        -device e1000,netdev=net0,mac=$VM_MAC_ADDRESS \
         -enable-kvm \
         -cpu host \
         -machine pc \
         $display_options \
-        -monitor none &
+        -monitor unix:/tmp/qemu-monitor.sock,server,nowait &
     
     QEMU_PID=$!
     log_success "VM started with PID: $QEMU_PID"
 }
 
+
+
 wait_for_vm_boot() {
     log_info "Waiting for Windows VM to boot..."
     
     local start_time=$(date +%s)
-    local timeout=180  # 3 minutes for boot
+    local timeout=600
+    
+    # Wait for VM network (bridge mode only)
+    if is_bridge_networking; then
+        log_info "Bridge networking - waiting for VM network"
+        wait_for_vm_ip || exit 1
+    else
+        log_info "NAT networking - using port forwarding"
+    fi
     
     while true; do
         local current_time=$(date +%s)
@@ -194,30 +367,17 @@ wait_for_vm_boot() {
             exit 1
         fi
         
-        # Check if QEMU process is still running
         if ! kill -0 "$QEMU_PID" 2>/dev/null; then
             log_error "VM process died unexpectedly"
             exit 1
         fi
         
-        # Try to connect to WinRM to see if VM is responsive
-        python3 -c "
-import winrm
-try:
-    session = winrm.Session('http://localhost:5985/wsman', 
-                           auth=('developer', 'Password123'), 
-                           transport='basic')
-    result = session.run_cmd('echo VM is ready')
-    if result.status_code == 0:
-        with open('/tmp/winrm_success', 'w') as f:
-            f.write('success')
-except:
-    pass
-        "
-        
-        if [ -f /tmp/winrm_success ]; then
-            rm -f /tmp/winrm_success
+        if test_winrm_connection; then
             log_success "Windows VM is responsive"
+            # Export VM IP for compatibility
+            if is_bridge_networking; then
+                export VM_IP="$VM_STATIC_IP"
+            fi
             break
         fi
         
@@ -229,110 +389,87 @@ except:
 check_windows_license() {
     log_info "Checking Windows license status..."
     
+    local winrm_url=$(get_winrm_url)
+    
     python3 - << EOF
 import winrm
 try:
-    session = winrm.Session('http://localhost:5985/wsman', 
+    session = winrm.Session('${winrm_url}', 
                            auth=('developer', 'Password123'), 
                            transport='basic')
     
-    print("[LICENSE] Checking rearm availability...")
-    
-    # Get rearm count (this works reliably)
     rearm_result = session.run_cmd('powershell -c "Get-CimInstance SoftwareLicensingService | Select -ExpandProperty RemainingWindowsReArmCount"')
     if rearm_result.status_code == 0:
         rearm_count = rearm_result.std_out.decode().strip()
-        print(f"[LICENSE] Remaining rearms: {rearm_count}")
-        
-        # For now, just report the rearm count
-        # TODO: Add grace period detection when we find working PowerShell command
-        print("[LICENSE] License monitoring active - rearm available when needed")
+        print(f"License rearms remaining: {rearm_count}")
     else:
-        print("[LICENSE] Could not check license status")
+        print("Could not check license status")
         
 except Exception as e:
-    print(f"[LICENSE] Error: {e}")
+    print(f"License check error: {e}")
 EOF
 }
 
 configure_runtime_docker_api() {
-    log_info "Configuring Docker TCP API for runtime access..."
+    log_info "Configuring Docker TCP API..."
+    
+    local winrm_url=$(get_winrm_url)
     
     python3 - << EOF
 import winrm
 try:
-    session = winrm.Session('http://localhost:5985/wsman', 
+    session = winrm.Session('${winrm_url}', 
                            auth=('developer', 'Password123'), 
                            transport='basic')
-    
-    print("[RUNTIME] Checking daemon.json configuration...")
     
     # Check if daemon.json exists and has correct content
     result = session.run_cmd('type C:\\\\ProgramData\\\\Docker\\\\config\\\\daemon.json 2>nul')
     if result.status_code == 0 and 'tcp://0.0.0.0:2376' in result.std_out.decode():
-        print("[RUNTIME] daemon.json exists with TCP configuration")
-        
-        # Verify service has no conflicting CLI flags
+        # Configuration exists, ensure no CLI flag conflicts
         result = session.run_cmd('sc qc docker')
         if '-H' in result.std_out.decode() or '--host' in result.std_out.decode():
-            print("[RUNTIME] Removing conflicting CLI flags from service...")
             session.run_ps('Stop-Service Docker -Force')
             session.run_cmd('sc config docker binpath= "C:\\\\Windows\\\\system32\\\\dockerd.exe --run-service"')
             session.run_ps('Start-Service Docker')
-            print("[RUNTIME] Docker service cleaned of CLI flags")
-        else:
-            print("[RUNTIME] Docker service configuration is clean")
-            
-        # Ensure Docker API firewall rule exists (critical fix for TCP connectivity)
-        print("[RUNTIME] Ensuring Docker API firewall rule exists...")
-        firewall_result = session.run_cmd('netsh advfirewall firewall show rule name="Docker API TCP"')
-        if firewall_result.status_code != 0:
-            print("[RUNTIME] Adding missing Docker API firewall rule...")
-            session.run_cmd('netsh advfirewall firewall add rule name="Docker API TCP" dir=in protocol=TCP localport=2376 action=allow')
-            print("[RUNTIME] Docker API firewall rule added")
-        else:
-            print("[RUNTIME] Docker API firewall rule already exists")
-            
     else:
-        print("[RUNTIME] daemon.json missing or incorrect, creating it...")
+        # Create daemon.json configuration
         session.run_ps('Stop-Service Docker -Force')
-        
-        # Create daemon.json with proper configuration
         session.run_ps('New-Item -ItemType Directory -Path "C:\\\\ProgramData\\\\Docker\\\\config" -Force')
-        
-        # Create Docker data-root directory (required for daemon.json data-root setting)
-        print("[RUNTIME] Creating Docker data-root directory...")
         session.run_ps('New-Item -ItemType Directory -Path "C:\\\\Docker" -Force')
         
         daemon_json = '{\\"hosts\\": [\\"tcp://0.0.0.0:2376\\", \\"npipe://\\"], \\"debug\\": false, \\"data-root\\": \\"C:\\\\\\\\Docker\\", \\"storage-opts\\": [\\"size=60GB\\"]}'
         daemon_config = f'echo {daemon_json} > C:\\\\\\\\ProgramData\\\\\\\\Docker\\\\\\\\config\\\\\\\\daemon.json'
         session.run_cmd(daemon_config)
         
-        # Ensure service has no CLI flags
         session.run_cmd('sc config docker binpath= "C:\\\\Windows\\\\system32\\\\dockerd.exe --run-service"')
-        session.run_cmd('sc config docker start= delayed-auto')
-        
-        # Ensure Docker API firewall rule exists (critical fix for TCP connectivity)
-        print("[RUNTIME] Adding Docker API firewall rule...")
-        session.run_cmd('netsh advfirewall firewall add rule name="Docker API TCP" dir=in protocol=TCP localport=2376 action=allow')
-        print("[RUNTIME] Docker API firewall rule added")
-        
+        session.run_cmd('sc config docker start= auto')
         session.run_ps('Start-Service Docker')
-        print("[RUNTIME] daemon.json created and Docker restarted")
+    
+    # Ensure firewall rule exists
+    firewall_result = session.run_cmd('netsh advfirewall firewall show rule name="Docker API TCP"')
+    if firewall_result.status_code != 0:
+        session.run_cmd('netsh advfirewall firewall add rule name="Docker API TCP" dir=in protocol=TCP localport=2376 action=allow')
         
 except Exception as e:
-    print(f"[RUNTIME] Error configuring Docker API: {e}")
+    print(f"Docker API configuration error: {e}")
 EOF
 }
+
 
 wait_for_docker() {
     log_info "Waiting for Docker daemon to be ready..."
     
-    # First try to configure TCP API if needed
     configure_runtime_docker_api
     
     local start_time=$(date +%s)
     local timeout=$DOCKER_TIMEOUT
+    local docker_url=$(get_docker_url)
+    
+    if is_bridge_networking; then
+        log_info "Bridge networking - connecting to VM at $VM_STATIC_IP"
+    else
+        log_info "NAT networking - using port forwarding"
+    fi
     
     while true; do
         local current_time=$(date +%s)
@@ -343,9 +480,13 @@ wait_for_docker() {
             exit 1
         fi
         
-        # Try to connect to Docker daemon
-        if curl -s --max-time 5 "http://localhost:${HOST_DOCKER_PORT}/version" >/dev/null 2>&1; then
+        if curl -s --max-time 5 "$docker_url" >/dev/null 2>&1; then
             log_success "Docker daemon is ready"
+            
+            if is_bridge_networking; then
+                export DOCKER_HOST="tcp://$VM_STATIC_IP:2376"
+                log_info "Bridge networking configured"
+            fi
             break
         fi
         
@@ -357,36 +498,52 @@ wait_for_docker() {
 show_status() {
     log_success "Windows VM Manager is ready!"
     log_info ""
-    log_info "Docker daemon: http://localhost:${HOST_DOCKER_PORT}"
-    log_info "Application port: http://localhost:${HOST_APP_PORT}"
-    log_info ""
-    log_info "Usage examples:"
-    log_info "  # Test Docker connection"
-    log_info "  curl http://localhost:${HOST_DOCKER_PORT}/version"
-    log_info ""
-    log_info "  # Build Windows container"
-    log_info "  docker --context tcp://localhost:${HOST_DOCKER_PORT} build -t my-app ."
-    log_info ""
-    log_info "  # Run Windows container"
-    log_info "  docker --context tcp://localhost:${HOST_DOCKER_PORT} run -p 8080:8080 my-app"
+    
+    if is_bridge_networking; then
+        log_info "Networking: Bridge mode (Static VM IP: $VM_STATIC_IP)"
+        log_info "Docker daemon: tcp://$VM_STATIC_IP:2376"
+        log_info "VM has full network access"
+        log_info ""
+        log_info "Usage examples:"
+        log_info "  # Create Docker context"
+        log_info "  docker context create wcb --docker host=tcp://$VM_STATIC_IP:2376"
+        log_info ""
+        log_info "  # Test Docker connection"
+        log_info "  docker -c wcb version"
+        log_info ""
+        log_info "  # Run Windows container"
+        log_info "  docker -c wcb run mcr.microsoft.com/windows/nanoserver:ltsc2022 ping 8.8.8.8"
+    else
+        log_info "Networking: NAT mode"
+        log_info "Docker daemon: http://localhost:${HOST_DOCKER_PORT}"
+        log_info "Application port: http://localhost:${HOST_APP_PORT}"
+        log_info ""
+        log_info "Usage examples:"
+        log_info "  # Test Docker connection"
+        log_info "  curl http://localhost:${HOST_DOCKER_PORT}/version"
+        log_info ""
+        log_info "  # Build Windows container"
+        log_info "  docker -H tcp://localhost:${HOST_DOCKER_PORT} build -t my-app ."
+    fi
+    
     log_info ""
     log_info "Stop this container to shutdown the VM"
 }
 
 idle_loop() {
-    log_info "Entering idle state - VM will run until container is stopped"
+    log_info "VM running - container will remain active until stopped"
     
-    # Monitor QEMU process and keep container alive
+    local docker_health_url=$(get_docker_url)
+    
     while kill -0 "$QEMU_PID" 2>/dev/null; do
-        sleep 10
+        sleep 30
         
-        # Optional: Check Docker health periodically
-        if ! curl -s --max-time 5 "http://localhost:${HOST_DOCKER_PORT}/version" >/dev/null 2>&1; then
-            log_warn "Docker daemon appears to be unresponsive"
+        if ! curl -s --max-time 5 "$docker_health_url" >/dev/null 2>&1; then
+            log_warn "Docker daemon health check failed"
         fi
     done
     
-    log_error "VM process died unexpectedly"
+    log_error "VM process terminated unexpectedly"
     exit 1
 }
 

@@ -19,6 +19,10 @@ RUN apk add --no-cache \
     bash \
     mtools \
     dosfstools \
+    socat \
+    tcpdump \
+    bridge-utils \
+    dnsmasq \
     && pip3 install --no-cache-dir --break-system-packages pywinrm \
     && rm -rf /var/cache/apk/* /tmp/* /root/.cache
 

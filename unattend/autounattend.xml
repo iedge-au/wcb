@@ -186,34 +186,39 @@
                     <Order>19</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>powershell -Command "echo 'Checking Docker service availability...' >> C:\docker-install.log; for(\$i=1; \$i -le 10; \$i++) { if(Get-Service Docker -ErrorAction SilentlyContinue) { echo 'Docker service found' >> C:\docker-install.log; Start-Service Docker *>> C:\docker-install.log 2>&amp;1; Set-Service Docker -StartupType Automatic *>> C:\docker-install.log 2>&amp;1; break } else { echo \"Attempt \$i: Docker service not ready, waiting...\" >> C:\docker-install.log; Start-Sleep -Seconds 30 } }"</CommandLine>
-                    <Description>Wait for and start Docker service</Description>
+                    <CommandLine>powershell -Command "echo 'Fixing Docker service startup type to eliminate 120s delay...' >> C:\docker-install.log; sc config docker start= auto *>> C:\docker-install.log 2>&amp;1; echo 'Docker service configured for immediate startup' >> C:\docker-install.log"</CommandLine>
+                    <Description>Fix Docker service startup type</Description>
                     <Order>20</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "echo 'Checking Docker service availability...' >> C:\docker-install.log; for(\$i=1; \$i -le 10; \$i++) { if(Get-Service Docker -ErrorAction SilentlyContinue) { echo 'Docker service found' >> C:\docker-install.log; Start-Service Docker *>> C:\docker-install.log 2>&amp;1; break } else { echo \"Attempt \$i: Docker service not ready, waiting...\" >> C:\docker-install.log; Start-Sleep -Seconds 30 } }"</CommandLine>
+                    <Description>Wait for and start Docker service</Description>
+                    <Order>21</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
                     <CommandLine>powershell -Command "echo 'Testing Docker installation...' >> C:\docker-install.log; docker version *>> C:\docker-install.log 2>&amp;1"</CommandLine>
                     <Description>Test Docker installation</Description>
-                    <Order>21</Order>
+                    <Order>22</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
                     <CommandLine>powershell -Command "echo 'Adding Docker API firewall rule...' >> C:\docker-install.log; netsh advfirewall firewall add rule name='Docker API TCP' dir=in protocol=TCP localport=2376 action=allow *>> C:\docker-install.log 2>&amp;1"</CommandLine>
                     <Description>Add firewall rule for Docker API TCP port 2376</Description>
-                    <Order>22</Order>
+                    <Order>23</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>powershell -Command "echo 'Ensuring Docker auto-start configuration...' >> C:\docker-install.log; sc config docker start= auto *>> C:\docker-install.log 2>&amp;1; sc start docker *>> C:\docker-install.log 2>&amp;1; echo 'Final Docker service status:' >> C:\docker-install.log; sc query docker *>> C:\docker-install.log 2>&amp;1"</CommandLine>
-                    <Description>Ensure Docker service auto-starts and verify status</Description>
-                    <Order>23</Order>
+                    <CommandLine>powershell -Command "echo 'Verifying Docker service configuration...' >> C:\docker-install.log; sc query docker *>> C:\docker-install.log 2>&amp;1; Get-Service Docker *>> C:\docker-install.log 2>&amp;1"</CommandLine>
+                    <Description>Verify Docker service status</Description>
+                    <Order>24</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
                     <CommandLine>cmd /c "echo Docker installation complete > C:\docker-installed.txt"</CommandLine>
                     <Description>Mark Docker installation complete</Description>
-                    <Order>24</Order>
+                    <Order>25</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
                     <CommandLine>cmd /c "echo Setup complete > C:\setup-complete.txt"</CommandLine>
                     <Description>Mark Setup Complete</Description>
-                    <Order>25</Order>
+                    <Order>26</Order>
                 </SynchronousCommand>
             </FirstLogonCommands>
         </component>
