@@ -141,6 +141,11 @@
                     <Order>10</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -Command "wmic useraccount where \"name='developer'\" set PasswordExpires=false; wmic useraccount where \"name='testuser'\" set PasswordExpires=false; wmic useraccount where \"name='Administrator'\" set PasswordExpires=false"</CommandLine>
+                    <Description>Disable password expiration for all accounts</Description>
+                    <Order>27</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
                     <CommandLine>powershell -Command "Restart-Service winrm -Force"</CommandLine>
                     <Description>Restart WinRM service</Description>
                     <Order>11</Order>
